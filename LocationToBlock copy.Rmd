@@ -1,0 +1,92 @@
+---
+title: "LocationToBlock"
+author: "Reilly McBride"
+date: "1/26/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sf)
+library(tmap)
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(raster)
+library(units)
+library(smoothr)
+library(stringr)
+library(rgeos)
+library(plyr)
+library(purrr)
+library(data.table)
+library(dplyr)
+library(tigris)
+```
+
+## Reading in the Data Files
+
+Sources: 
+1. Blocks: [American Fact Finder](https://factfinder.census.gov/faces/nav/jsf/pages/searchresults.xhtml?refresh=t)
+2. [Crimes](https://data.cityofchicago.org/Public-Safety/Crimes-2001-to-present-Map/c4ep-ee5m)
+3. [Business Licenses](https://data.cityofchicago.org/Community-Economic-Development/Business-Licenses/r5kz-chrr)
+
+
+```{r, echo=TRUE, results='hide'}
+blocks <- st_read("CookBlocks.shp")
+
+crimes <- fread(file="Chicago_Crimes_2001_Present.csv", header = T)
+cleancrimes <- filter(crimes, (is.na(Latitude) == 0))
+head(cleancrimes)
+
+#licenses <- read.csv(file = "Business_Licenses.csv")
+licenses <- fread(file="Business_Licenses.csv", header = T)
+cleanlicenses <- filter(licenses, (is.na(LATITUDE) == 0))
+
+```
+
+## Spatial intersections
+
+``` {r}
+
+#convert your dataframe of observations with latitude/longitude point locations into an sf spatial dataframe with point geometry column
+
+licensesbyyear <- function(yr) {
+  licensesyr <- subset(cleanlicenses, grepl(yr, `LICENSE APPROVED FOR ISSUANCE`))
+  blocks_trans <- st_transform(blocks, 2163)
+  df <- st_as_sf(licensesyr, coords = c("LONGITUDE","LATITUDE"), crs=4326, remove = FALSE)
+  df <- st_transform(df, 2163)
+  #sf spatial dataframe with polygon geometries of census block groups
+  #create a dataframe where each point location is paired with the corresponding census block group geometry
+  joined_data<-st_join(df,blocks_trans)
+  frq <- as.data.frame(table(joined_data$GEO_ID))
+  freq_col <- paste(yr, "freq", sep = "")
+  frq <- dplyr::rename(frq, GEO_ID = Var1, !!freq_col := Freq)
+  return(frq)
+}
+
+v <- 2002:2017
+v <- as.character(v)
+v
+
+for (val in v) {
+  givenyr <- licensesbyyear(val)
+  blocks_trans <- left_join(blocks_trans, givenyr)
+}
+
+
+
+```
+
+## Example mapping
+
+``` {r}
+
+tmap_mode("view")
+tm_shape(blocks_trans) + tm_fill("2002freq", style = "jenks", n = 10, palette = "Blues") + tm_borders() 
+
+```
+
+
