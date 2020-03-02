@@ -1,0 +1,143 @@
+---
+title: "SOSCAssignment3"
+author: "Reilly McBride"
+date: "2/23/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sf)
+library(tmap)
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(raster)
+library(units)
+library(smoothr)
+library(stringr)
+library(rgeos)
+library(plyr)
+library(purrr)
+library(data.table)
+library(dplyr)
+library(tigris)
+```
+
+## Introduction
+
+#### Data Sets
+1. [Business Licenses](https://data.cityofchicago.org/Community-Economic-Development/Business-Licenses/r5kz-chrr): Business Licenses issues by the City of Chicago from 2002 to present (January 2019 was when I downloaded this). Contains information on the status of the license--e.g., active versus revoked, the location of the business (latitude & longitude coordinates), the name of the business, the type of business activity, etc.
+2. [Grocery Stores](https://data.cityofchicago.org/Community-Economic-Development/Grocery-Stores-2013/53t8-wyrc/data): List of all the Grocery stores in the city of Chicago in 2013. Includes name of grocery store and their business license account information and the latitude longitude point location of each grocery store.
+3. [Community Areas](https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-Community-Areas-current-/cauq-8yn6): Shapefile of community area boundaries for the city of Chicago, downloaded from the City of Chicago Data Portal.
+
+#### Determining the Appropriate Buffer
+
+Outside Literature:
+1. [Beyond Neighborhood Food Environments: Distance Traveled to Food Establishments in 5 US Cities, 2009–2011](https://www.cdc.gov/pcd/issues/2015/15_0065.htm): When food establishments were identified collectively as sit-down restaurants, fast-food/convenience stores, malls or stores, groceries/supermarkets, the average distance traveled from home to reach them was 2.6 miles. Buffers of 1 and 2 miles around food establishments covered 55% and 65% of food establishments respectively. Participants traveled the longest distance to restaurants and the shortest distance to grocery stores. The average distance to sit down restaurants was 3.3 miles, but the median was 1.4 miles. Distances of trips to sit down restaurants was the most widely distributed of all the food establishment types.
+2. [Convenience, Accessibility, and the Demand for Fast Food](https://ageconsearch.umn.edu/bitstream/31162/1/26010058.pdf): Came to the conclusion that increasing the density of fast food stores available increased the consumption of fast food, because it made each meal less expensive. They found little evidence that fast food stores were directly in competition with sit down restaurants.
+3. [Predictors of Trips to Food Destinations](https://www.ncbi.nlm.nih.gov/pmc/articles/pmid/22607218/) Found mean distance traveled to sit-down restaurants was 6.10 miles, 4.96 miles for fast food, and 4.50 for coffee shops.
+4. [Young adult eating and food-purchasing patterns food store location and residential proximity](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3007118/): Found that away from home eating occassions (doesn't include grocery shopping) averaged 6.7 miles away from home: specifically, 12% within 1/2 mile, 17% within 1 mile, and 34% within 2 miles. Results were similar even when residents lived in dormitories. 
+
+The average mean distance to sit-down restaurants traveled found by these studies was 5.13 miles. Since the distribution of restaurant travel is particularly skewed, I'm going to round down to 5 miles so that the buffer is hopefully representative of normal resturant trips and doesn't include potential outlier special occassion trips.
+
+
+```{r, echo=TRUE, results='hide'}
+commareas <- st_read("CommAreas.shp")
+licenses <- fread(file="Business_Licenses.csv", header = T)
+cleanlicenses <- filter(licenses, (is.na(LATITUDE) == 0))
+grocery <- fread(file="GroceryStores2013.csv", header = T)
+```
+
+## Methods
+
+From data source: "LICENSE STATUS: ‘AAI’ means the license was issued. ‘AAC’ means the license was cancelled during its term. ‘REV’ means the license was revoked. 'REA'means the license revocation has been appealed."
+
+I only want active businesses, because those would be the only accessible ones, so I'm going to filter for LICENSE STATUS = AAI.
+
+```{r}
+active <- filter(cleanlicenses, `LICENSE STATUS` == 'AAI')
+```
+
+I want just restaurants I looked through the Business Activity descriptions:
+Retail Sales of Perishable Foods includes restaurants and grocery stores, but there's nothing unique to just restaurants unless I only use restaurants where liquor is consumed on premises, which I don't think is a good choice. I'll use it to star though.
+
+```{r}
+food <- filter(active, `BUSINESS ACTIVITY` == 'Retail Sales of Perishable Foods')
+```
+
+I only care about the fact that the license exists, not how many times they had to get a license, so I'm going to remove duplicates based on account number (after examining this is an easy constant for every business license the same business got).
+
+```{r}
+foodunique <- food %>% distinct(`ACCOUNT NUMBER`, .keep_all = TRUE)
+```
+
+I'm going to remove all the grocery stores: I want everything that sells food that isn't a grocery store. Since this is only point data, st_difference  won't make sense here--and the point data also isn't exactly the same for the same business across data sets. So, I'm going to use account number again.
+
+```{r}
+restaurants <- anti_join(foodunique, grocery, by="ACCOUNT NUMBER")
+```
+
+I'm now going to make them my just-restaurants data a shapefile, transform it to the 3435 projection, and also transform the community areas shapefile to the same projection.
+
+```{r}
+rest_sf = st_as_sf(restaurants, coords = c("LONGITUDE", "LATITUDE"), crs = 4326)
+rest_sf <- st_transform(rest_sf, 3435)
+commareas <- st_transform(commareas, 3435)
+```
+
+The unit of distance for the 3435 projection system is feet, so, if I want a 5 mile buffer, I need 26400 feet.
+I want to know how many restaurants are accessible per community area, so there's no point in making a union of all the restaurants for actual analysis--especially since restaurants are something that are going to be found all over Chicago (there are 21706 items in this data).
+
+```{r}
+buff_5mi = st_buffer(rest_sf, dist = 26400)
+#plot(buff_5mi$geometry) this is essentially just a black region because there are so many
+
+#creating just for visualization purposes to demonstrate how widespread restaurants are
+all_buffers <- st_union(buff_5mi)
+```
+
+## Results
+
+Demonstrating the fact that restaurants are dispersed throughout all of Chicago and using a 5 mile buffer for each restaurant completely covers the city: 
+
+```{r}
+tmap_mode("plot")
+tm_shape(commareas, unit = "mi") + 
+  tm_borders() + tm_shape(all_buffers) + tm_polygons(col = "purple", alpha = 0.2) +
+  tm_shape(rest_sf) + tm_dots(size = 0.01) +
+  tm_layout(main.title = "Figure 1. Resource Map", main.title.size = 0.75) +
+  tm_compass(position = c ("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom"))
+```
+
+Generating a map that show the number of accessible resaturants per community area:
+
+```{r}
+restPIP <- st_join(commareas, buff_5mi)
+restPIPDF <- as.data.frame(restPIP)
+
+restbycomm <- as.data.frame(table(restPIPDF$community))
+restbycomm <- dplyr::rename(restbycomm, community = Var1) 
+commareasmerged = merge(commareas, restbycomm)
+
+#write.csv(st_drop_geometry(commareasmerged),"RestaurantAccesibility.csv")
+
+tm_shape(commareasmerged, unit = "mi") + 
+  tm_borders(lwd = 0.5) +
+  tm_fill(col = "Freq", style = "jenks", n = 10, title = "Accessible Restaurants Per Comm. Area") + 
+  tm_layout(main.title = "Figure 2. Thematic Map (Natural Breaks)", 
+            main.title.size = 0.75, legend.outside = TRUE, legend.text.size = 1.2, legend.title.size = 2.0) +
+  tm_compass(position = c ("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom"))
+```
+
+## Discussion
+
+
+
+
