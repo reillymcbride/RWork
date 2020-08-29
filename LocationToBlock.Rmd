@@ -41,7 +41,6 @@ crimes <- fread(file="Chicago_Crimes_2001_Present.csv", header = T)
 cleancrimes <- filter(crimes, (is.na(Latitude) == 0))
 head(cleancrimes)
 
-#licenses <- read.csv(file = "Business_Licenses.csv")
 licenses <- fread(file="Business_Licenses.csv", header = T)
 cleanlicenses <- filter(licenses, (is.na(LATITUDE) == 0))
 
@@ -75,8 +74,6 @@ for (val in v) {
   givenyr <- licensesbyyear(val)
   blocks_trans <- left_join(blocks_trans, givenyr)
 }
-
-
 
 ```
 

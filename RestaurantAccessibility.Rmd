@@ -136,8 +136,6 @@ tm_shape(commareasmerged, unit = "mi") +
   tm_scale_bar(position = c("left", "bottom"))
 ```
 
-## Discussion
-
 
 
 
